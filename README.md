@@ -171,11 +171,33 @@ dependencies than npm install for CI/CD environments.
 
 ```yaml
 
-- run: |
-        touch .env
-        echo "${{ secrets.PROD_ENV_FILE }}" > .env
+- name: Generate .env
+  run: |
+    echo "SECRET_KEY=${{ secrets.PROD_ENV_FILE }}" > .env
+  env:
+    SECRET_KEY: ${{ secrets.PROD_ENV_FILE }}
 ```
-This step creates a new .env file and writes the value of the secret named `PROD_ENV_FILE` into it.
+`name: Generate .env`
+This line provides a name for the step, making it easier to understand its purpose when viewing the workflow run logs.
+In this case, the step is named `Generate .env.`
+
+`run: |`
+The run key specifies the shell commands that should be executed in this step. The `| symbol` indicates that a 
+multi-line block is used, allowing for the execution of multiple commands.
+
+`echo "SECRET_KEY=${{ secrets.PROD_ENV_FILE }}" > .env`
+This command uses echo to write the content `"SECRET_KEY=${{ secrets.PROD_ENV_FILE }}"` into a file named .env. 
+The `${{ secrets.PROD_ENV_FILE }}` is a GitHub Actions syntax to reference the value of the `PROD_ENV_FILE` secret. 
+The `> symbol` redirects the output of the echo command into the `.env` file, overwriting its contents if the 
+file already exists.
+
+`env`:
+The env key is used to set environment variables for the step. In this case, it's setting the `SECRET_KEY` environment 
+variable to the value of the `PROD_ENV_FILE` secret.
+
+`SECRET_KEY: ${{ secrets.PROD_ENV_FILE }}`
+This line specifies that the SECRET_KEY environment variable within the context of this step should be set to 
+the value of the `PROD_ENV_FILE` secret.
 
 -------------------------------------------------------------------------------------------------------------
 
@@ -242,6 +264,135 @@ Active: `active (running) since...`
 3. In the `Name*` field add a Secret name, then copy all our .env variables in the the `Secret*` section
 
 4. Now click `Add secret button`
-5. go to: `https://github.com/leegodden/nodejs-restapi-ec2/actions/new`
-6. under `Continuous Integration`, choose `Node.js` by clicking the `Configure` button
-7. Ammend the code to our `Node.js.yaml` file
+
+# Create our Github Action
+
+5. go to: `Actions` & under `Continuous Integration`, choose `Node.js` by clicking the `Configure` button
+7. Ammend the code to our `Node.js.yaml` file to suit our requirements
+8. Click `Commit Changes`
+9. Click `Actions` tab and check our job was successfully created
+
+10. back in the termiinal in our instance check we are still in our our `/actions-runner-backendserver` 
+	folder and run `ls`. You should see a `_work` folder. cd into it and run `ls` again to view its contents
+
+	you should see the following:
+	`PipelineMapping`  `_actions`  `_temp`  `_tool` and our `nodejs-restapi-ec2` repo
+
+11. now cd into the `nodejs-restapi-ec2` folder and run `ls` to see all our project
+	 files and folders
+
+12. run `ls -a` to see our .env file
+
+# Install Node on Our Ec2 instance
+
+1. in the terminal in the `nodejs-restapi-ec2` folder run: `sudo apt update`
+
+2. now run: `curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -`
+
+# Notes for the above line
+
+This line uses curl to fetch the setup script from the NodeSource repository. The script is not the Node.js source 
+code but rather a `configuration script that sets up the NodeSource repository` and any necessary configurations 
+for installing Node.js.
+
+The `-fsSL` instruct curl to fail silently on errors `(-f)`, follow redirects `(-L)`, and show a 
+progress bar `(-s)`.
+
+The pipe operator `(|)` is used to redirect the output of the curl command as input to the next command.
+
+`sudo -E bash -`: Runs the bash shell with elevated privileges using sudo. The `-E` option preserves the user
+environment when running the command with elevated privileges. The hyphen `(-)` at the end is an argument for the bash 
+shell, which typically tells it to read commands from the standard input.
+
+The script retrieved by curl is responsible for adding the `NodeSource repository` to our system's package manager 
+and setting up the necessary configurations to install `Node.js`. In this case, it sets up the `LTS` 
+(Long Term Support) version of Node.js.
+
+3. now run: `sudo apt-get install -y nodejs` to install node from the the downloaded nodeSource package
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+# Install Nginx & Pm2
+
+1. in the termianl run: `sudo apt-get install -y nginx`
+2. in the terminal run: `sudo npm -g pm2`
+
+PM2 is a renowned open-source process manager tailored for Node. js applications. It acts as a guardian, streamlining 
+deployment, overseeing logs, monitoring resources, and ensuring minimal downtime for every application it manages.
+
+# Configure NGINX
+
+1. in the terminal run: `cd /etc/nginx/sites-available`
+	the `sites-available directory` typically contains configuration files for individual websites or web applications.
+
+2. run `ls`, you will see `default`
+3. run `sudo nano default` to open this default file
+
+4. in the browser add our Ec2 instances `public ip4 addres` and you should see the `Welcome to nginx message` 
+5. Now back in the nginx default file add the below
+
+```yaml
+location /api {
+        rewrite ^\/api\/(.*)$ /api/$1 break;
+        proxy_pass http://localhost:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        
+        }
+```
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+# Notes on the above configuration block
+
+`location /api { ... }`
+This block specifies a location in the URL space where the following directives should apply. In this case, it matches 
+requests with the path prefix /api.
+
+`rewrite ^\/api\/(.*)$ /api/$1 break;`
+This line uses the rewrite directive to modify the request URI. It captures any characters following /api/ and appends 
+them to the rewritten URI. The break flag stops further processing of location blocks, ensuring that this block is the 
+last one processed for this request.
+
+`proxy_pass http://localhost:5000;`
+This directive sets the backend server to which Nginx should forward requests. In this case, it's forwarding 
+requests to http://localhost:5000. This is typically the address of your backend application or API server.
+
+`proxy_set_header Host $host;`
+Passes the original Host header from the client request to the proxied server. It ensures that the proxied server 
+knows the original hostname requested by the client.
+
+`proxy_set_header X-Real-IP $remote_addr;: Sets the X-Real-IP`
+header to the original IP address of the client. This can be useful for logging on the proxied server.
+
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`
+ Appends the client's IP address to the X-Forwarded-For header. This header is commonly used to track the client's 
+ real IP address when requests pass through multiple proxy servers.
+
+ In summary, this Nginx configuration block is designed to forward requests with the path prefix /api to a backend 
+ server running on localhost:5000. The rewrite directive adjusts the request URI before forwarding it. The 
+ proxy_set_header directives ensure that certain headers are passed along with the request to provide information 
+ about the client to the backend server.
+
+5. restart the `nginx` server: run: `sudo systemctl restart nginx`
+	and run `ls ` to see all our project files and folders.
+
+6. run: `cd ~/actions-runner-backendserver/_work/nodejs-restapi-ec2/nodejs-restapi-ec2$` to Start the backend
+	Express server
+
+7. Use `Pm2` to start our backend express by running: `pm2 start server.js --name=BackendAPI` 
+
+You should see the below as part of returned output along with some stats in a table
+
+[PM2] Spawning PM2 daemon with pm2_home=/home/ubuntu/.pm2
+[PM2] PM2 Successfully daemonized...
+
+8. back in the browser ammend our Ec2 instances `public ip4 addres` url in address bar to `35.179.97.97/api/users`
+	and you should see the json `"succes": true` message, along with our response. 
+	
+Our nginx configuration is working correctly
+
+9. add an changes to our code in VS code, and run `git pull` to fetch the latest changes we made to `node.yml`
+
+To test that we can `push to github` and the code will be uodated in our Ec2 instance create a `new route` named
+`posts` in `server.js`
